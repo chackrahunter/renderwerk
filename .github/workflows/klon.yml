@@ -50,7 +50,7 @@ jobs:
         run: |
           # knackser.py liegt auf dem Mac in ~/Projekte/erklaerwerk/skripte – stimme-klon.py sucht es dort
           mkdir -p ~/Projekte/erklaerwerk/skripte && cp p/knackser.py ~/Projekte/erklaerwerk/skripte/
-          cd p
+          cd p; . ./umgebung.sh
           t0=$(date +%s)
           set +e
           KLON_PYTHON="$GITHUB_WORKSPACE/venv/bin/python" "$GITHUB_WORKSPACE/venv/bin/python" skripte/stimme-klon.py "public/folgen/${{ matrix.id }}" >klon.log 2>&1
