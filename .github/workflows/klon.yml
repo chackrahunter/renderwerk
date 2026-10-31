@@ -1,0 +1,70 @@
+name: klon
+run-name: ${{ inputs.auftrag }}
+
+# Stimme (OmniVoice-Klon, MLX) auf Apple-Silicon-Runnern. Auftrag verschlüsselt als Release-Anhang (auftrag.bin),
+# Ergebnis (Ton, JSON, Protokoll) verschlüsselt als Artefakt. Schlüssel nur als Secret AUFTRAG_SCHLUESSEL.
+# Das Protokoll wird NICHT ins Log geschrieben (öffentliches Repo) – es steckt im verschlüsselten Ergebnis.
+on:
+  workflow_dispatch:
+    inputs:
+      auftrag: { description: "Release-Tag", required: true }
+      ids: { description: "JSON-Liste", required: true }
+
+permissions:
+  contents: read
+
+jobs:
+  klon:
+    runs-on: macos-14
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        id: ${{ fromJSON(inputs.ids) }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Auftrag holen
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: gh release download "${{ inputs.auftrag }}" -R "$GITHUB_REPOSITORY" -p auftrag.bin -D . >/dev/null
+      - name: Entschlüsseln
+        env: { K: "${{ secrets.AUFTRAG_SCHLUESSEL }}" }
+        run: |
+          mkdir p
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:K -in auftrag.bin | tar -xz -C p
+          rm auftrag.bin
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip, cache-dependency-path: klon-requirements.txt }
+      - name: Python-Pakete (gleiche Versionen wie auf dem Mac)
+        run: |
+          python -m venv venv
+          venv/bin/pip install -q --disable-pip-version-check -r klon-requirements.txt
+      - name: ffmpeg
+        run: command -v ffmpeg >/dev/null || HOMEBREW_NO_AUTO_UPDATE=1 brew install -q ffmpeg >/dev/null
+      - name: Modelle (Cache)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-klon-omnivoice-q8-g64-whisper-small-v1
+      - name: Stimme rechnen
+        run: |
+          # knackser.py liegt auf dem Mac in ~/Projekte/erklaerwerk/skripte – stimme-klon.py sucht es dort
+          mkdir -p ~/Projekte/erklaerwerk/skripte && cp p/knackser.py ~/Projekte/erklaerwerk/skripte/
+          cd p
+          t0=$(date +%s)
+          set +e
+          KLON_PYTHON="$GITHUB_WORKSPACE/venv/bin/python" "$GITHUB_WORKSPACE/venv/bin/python" skripte/stimme-klon.py "public/folgen/${{ matrix.id }}" >klon.log 2>&1
+          echo $? >rc
+          echo "Dauer $(( $(date +%s) - t0 )) s" >>klon.log
+          echo "Ausgang $(cat rc)"
+      - name: Verschlüsseln
+        if: always()
+        env: { K: "${{ secrets.AUFTRAG_SCHLUESSEL }}" }
+        working-directory: p
+        run: |
+          d="public/folgen/${{ matrix.id }}"
+          tar -czf ../ergebnis.tgz klon.log rc $(ls $d/ton.wav $d/folge.json $d/props.json 2>/dev/null)
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:K -in ../ergebnis.tgz -out ../ergebnis.bin
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: "${{ matrix.id }}", path: ergebnis.bin, retention-days: 1, compression-level: 0 }
