@@ -1,0 +1,10 @@
+name: mlx-test
+on: workflow_dispatch
+jobs:
+  t:
+    runs-on: macos-14
+    steps:
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pip install -q mlx && python -c "import mlx.core as mx, platform; print(platform.machine(), mx.default_device(), mx.metal.is_available()); a=mx.random.normal((2048,2048)); import time; t=time.time(); [mx.eval(a@a) for _ in range(50)]; print('50 matmul', round(time.time()-t,2),'s')"
+      - run: sysctl -n machdep.cpu.brand_string hw.memsize hw.ncpu
